@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 // CORREÇÃO: Acesso seguro às variáveis de ambiente para evitar erro "Cannot read properties of undefined"
 const getEnv = () => {
     try {
-        // Tenta acessar import.meta.env de forma segura
+        // Tenta acessar import.meta.env de forma segura usando casting para any para evitar erro de TS
         return (import.meta as any).env || {};
     } catch {
         return {};
@@ -32,7 +32,6 @@ const USERS_KEY = 'rodovar_users_db_v1';
 const DRIVERS_KEY = 'rodovar_drivers_db_v1';
 
 // --- HELPERS DE FALLBACK (LOCAL STORAGE) ---
-// O LocalStorage serve como backup caso o Supabase falhe ou não esteja configurado
 const getLocal = <T>(key: string): T[] | Record<string, T> => {
     const data = localStorage.getItem(key);
     return data ? JSON.parse(data) : (key === STORAGE_KEY ? {} : []);
@@ -66,10 +65,10 @@ export const getAllUsers = async (): Promise<AdminUser[]> => {
 export const saveUser = async (user: AdminUser): Promise<boolean> => {
   const users = await getAllUsers();
   if (users.some(u => u.username === user.username)) {
-    // Se a senha for diferente, atualiza a senha (útil para o demo)
+    // Se a senha for diferente, atualiza a senha
     const existing = users.find(u => u.username === user.username);
     if(existing && existing.password !== user.password) {
-        // Update logic simplified for demo
+        // Permitir atualização de senha
     } else {
         return false;
     }
@@ -81,7 +80,6 @@ export const saveUser = async (user: AdminUser): Promise<boolean> => {
   }
 
   // Local
-  // Remove existing if any to update
   const newUsers = users.filter(u => u.username !== user.username);
   newUsers.push(user);
   localStorage.setItem(USERS_KEY, JSON.stringify(newUsers));
@@ -238,7 +236,6 @@ export const calculateProgress = (origin: Coordinates, destination: Coordinates,
     const remainingDistance = getDistanceFromLatLonInKm(current.lat, current.lng, destination.lat, destination.lng);
 
     if (totalDistance <= 0.1) return 100;
-    // Cálculo linear simples: (1 - restante/total) * 100
     let percentage = (1 - (remainingDistance / totalDistance)) * 100;
     
     if (percentage < 0) percentage = 0; 
@@ -247,7 +244,7 @@ export const calculateProgress = (origin: Coordinates, destination: Coordinates,
     return Math.round(percentage);
 };
 
-// --- CRUD SHIPMENTS (AGORA ASSÍNCRONO) ---
+// --- CRUD SHIPMENTS ---
 
 export const getAllShipments = async (): Promise<Record<string, TrackingData>> => {
   // Cloud (Supabase)
@@ -275,7 +272,7 @@ export const saveShipment = async (data: TrackingData): Promise<void> => {
       await supabase.from('shipments').upsert({ code: data.code, data: data });
   }
 
-  // Local (Sempre mantém backup local)
+  // Local
   const localRaw = localStorage.getItem(STORAGE_KEY);
   const localData = localRaw ? JSON.parse(localRaw) : {};
   
@@ -299,13 +296,11 @@ export const getShipment = async (code: string): Promise<TrackingData | null> =>
 
 // --- GERADOR DE CÓDIGOS ÚNICOS ---
 export const generateUniqueCode = async (): Promise<string> => {
-    // Busca códigos existentes (Cloud + Local mix handled by getAllShipments)
     const all = await getAllShipments();
     const existingCodes = new Set(Object.keys(all));
     let newCode = '';
     
     do {
-        // Gera 5 dígitos aleatórios (10000 a 99999)
         const randomNum = Math.floor(10000 + Math.random() * 90000);
         newCode = `RODO-${randomNum}`;
     } while (existingCodes.has(newCode));
@@ -315,10 +310,7 @@ export const generateUniqueCode = async (): Promise<string> => {
 
 // --- NOVO: BUSCAR CARGA POR TELEFONE DO MOTORISTA ---
 export const getShipmentByDriverPhone = async (phone: string): Promise<TrackingData | null> => {
-    // 1. Limpa o telefone de busca
     const cleanSearch = phone.replace(/\D/g, '');
-    
-    // 2. Busca o motorista
     const drivers = await getAllDrivers();
     const driver = drivers.find(d => {
         if (!d.phone) return false;
@@ -328,9 +320,6 @@ export const getShipmentByDriverPhone = async (phone: string): Promise<TrackingD
     
     if (!driver) return null;
 
-    // 3. Busca a carga ativa deste motorista
-    // Nota: Em produção pesada, isso deveria ser uma query filtrada no banco, 
-    // mas para manter a estrutura JSONB atual, buscamos tudo e filtramos.
     const allShipments = await getAllShipments();
     const activeShipment = Object.values(allShipments).find(s => 
         s.driverId === driver.id && 
